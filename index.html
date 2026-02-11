@@ -294,7 +294,7 @@
 
       // Fungsi Inisialisasi WebSocket
       function initWebSocket() {
-        socket = new WebSocket("https://ws.yumana.my.id");
+        socket = new WebSocket("wss://ws.yumana.my.id");
 
         socket.onopen = () => {
           // 3. Kirim pesan Autentikasi ke server Rust

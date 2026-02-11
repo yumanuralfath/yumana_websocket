@@ -66,10 +66,9 @@ async fn handle_connection(stream: TcpStream, rm: Arc<RoomManager>, cm: Arc<Conn
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
     let (tx, mut rx) = mpsc::unbounded_channel();
 
-    // Task untuk mengirim pesan ke client
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            if (ws_sender.send(msg).await).is_err() {
+            if ws_sender.send(msg).await.is_err() {
                 break;
             }
         }
@@ -88,45 +87,35 @@ async fn handle_connection(stream: TcpStream, rm: Arc<RoomManager>, cm: Arc<Conn
                 match client_msg {
                     ClientMessage::Authenticate { token } => {
                         if let Some(user) = validate_with_api(&token).await {
-                            let id_str = user.id.to_string();
-                            let username = user.username.clone();
+                            let id = user.id.to_string();
 
                             auth_user = Some(user.clone());
-                            cm.add(id_str.clone(), tx.clone());
+                            cm.add(id.clone(), tx.clone());
 
-                            // OTOMATIS MASUKKAN KE LOBBY
                             let player = Player {
-                                id: id_str.clone(),
-                                username: username.clone(),
+                                id: id.clone(),
+                                username: user.username.clone(),
                             };
+
                             if !rm.rooms.contains_key("lobby") {
                                 rm.rooms.insert(
-                                    "lobby".to_string(),
+                                    "lobby".into(),
                                     Arc::new(tokio::sync::RwLock::new(Room::new(
-                                        "lobby".to_string(),
+                                        "lobby".into(),
                                         100,
                                     ))),
                                 );
                             }
+
                             let _ = rm.join_room("lobby", player).await;
 
                             let _ = tx.send(Message::Text(
                                 serde_json::to_string(&ServerMessage::Authenticated { user })
                                     .unwrap(),
                             ));
-                            info!(
-                                "User {} ({}) terautentikasi dan masuk lobby",
-                                username, id_str
-                            );
-                        } else {
-                            let _ = tx.send(Message::Text(
-                                serde_json::to_string(&ServerMessage::Error {
-                                    message: "Auth Gagal".into(),
-                                })
-                                .unwrap(),
-                            ));
                         }
                     }
+
                     other => {
                         if let Some(user) = &auth_user {
                             let handler = MessageHandler {
@@ -134,6 +123,7 @@ async fn handle_connection(stream: TcpStream, rm: Arc<RoomManager>, cm: Arc<Conn
                                 username: user.username.clone(),
                                 room_manager: rm.clone(),
                             };
+
                             handler.handle(other).await;
                         }
                     }
@@ -143,7 +133,6 @@ async fn handle_connection(stream: TcpStream, rm: Arc<RoomManager>, cm: Arc<Conn
     }
 
     if let Some(user) = auth_user {
-        info!("User {} disconnected", user.username);
         cm.remove(&user.id.to_string());
     }
 }
