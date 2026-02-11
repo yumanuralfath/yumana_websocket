@@ -11,9 +11,11 @@ use yumana_websocket::*;
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    let addr = "127.0.0.1:8080";
+    let port = std::env::var("PORT").unwrap_or("8080".into());
+    let addr = format!("0.0.0.0:{}", port);
+
     let listener = TcpListener::bind(&addr).await.expect("Failed to bind");
-    info!("Server WebSocket berjalan di: {}", addr);
+    info!("Server WebSocket running at: {}", addr);
 
     let conn_manager = Arc::new(ConnectionManager::new());
     let room_manager = Arc::new(RoomManager::new(conn_manager.clone()));
@@ -81,58 +83,59 @@ async fn handle_connection(stream: TcpStream, rm: Arc<RoomManager>, cm: Arc<Conn
             Err(_) => break,
         };
 
-        if let Message::Text(text) = msg
-            && let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text)
-        {
-            match client_msg {
-                ClientMessage::Authenticate { token } => {
-                    if let Some(user) = validate_with_api(&token).await {
-                        let id_str = user.id.to_string();
-                        let username = user.username.clone();
+        if let Message::Text(text) = msg {
+            if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
+                match client_msg {
+                    ClientMessage::Authenticate { token } => {
+                        if let Some(user) = validate_with_api(&token).await {
+                            let id_str = user.id.to_string();
+                            let username = user.username.clone();
 
-                        auth_user = Some(user.clone());
-                        cm.add(id_str.clone(), tx.clone());
+                            auth_user = Some(user.clone());
+                            cm.add(id_str.clone(), tx.clone());
 
-                        // OTOMATIS MASUKKAN KE LOBBY
-                        let player = Player {
-                            id: id_str.clone(),
-                            username: username.clone(),
-                        };
-                        if !rm.rooms.contains_key("lobby") {
-                            rm.rooms.insert(
-                                "lobby".to_string(),
-                                Arc::new(tokio::sync::RwLock::new(Room::new(
+                            // OTOMATIS MASUKKAN KE LOBBY
+                            let player = Player {
+                                id: id_str.clone(),
+                                username: username.clone(),
+                            };
+                            if !rm.rooms.contains_key("lobby") {
+                                rm.rooms.insert(
                                     "lobby".to_string(),
-                                    100,
-                                ))),
-                            );
-                        }
-                        let _ = rm.join_room("lobby", player).await;
+                                    Arc::new(tokio::sync::RwLock::new(Room::new(
+                                        "lobby".to_string(),
+                                        100,
+                                    ))),
+                                );
+                            }
+                            let _ = rm.join_room("lobby", player).await;
 
-                        let _ = tx.send(Message::Text(
-                            serde_json::to_string(&ServerMessage::Authenticated { user }).unwrap(),
-                        ));
-                        info!(
-                            "User {} ({}) terautentikasi dan masuk lobby",
-                            username, id_str
-                        );
-                    } else {
-                        let _ = tx.send(Message::Text(
-                            serde_json::to_string(&ServerMessage::Error {
-                                message: "Auth Gagal".into(),
-                            })
-                            .unwrap(),
-                        ));
+                            let _ = tx.send(Message::Text(
+                                serde_json::to_string(&ServerMessage::Authenticated { user })
+                                    .unwrap(),
+                            ));
+                            info!(
+                                "User {} ({}) terautentikasi dan masuk lobby",
+                                username, id_str
+                            );
+                        } else {
+                            let _ = tx.send(Message::Text(
+                                serde_json::to_string(&ServerMessage::Error {
+                                    message: "Auth Gagal".into(),
+                                })
+                                .unwrap(),
+                            ));
+                        }
                     }
-                }
-                other => {
-                    if let Some(user) = &auth_user {
-                        let handler = MessageHandler {
-                            user_id: user.id.to_string(),
-                            username: user.username.clone(),
-                            room_manager: rm.clone(),
-                        };
-                        handler.handle(other).await;
+                    other => {
+                        if let Some(user) = &auth_user {
+                            let handler = MessageHandler {
+                                user_id: user.id.to_string(),
+                                username: user.username.clone(),
+                                room_manager: rm.clone(),
+                            };
+                            handler.handle(other).await;
+                        }
                     }
                 }
             }
